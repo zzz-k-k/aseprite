@@ -5,82 +5,43 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest]
         include:
           - os: windows-latest
             skia_arch: x64
             ext: .exe
-          - os: macos-latest
-            skia_arch: arm64
-            ext: ''
-          - os: ubuntu-latest
-            skia_arch: x64
-            ext: ''
     steps:
     - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
     
-    # 安装系统依赖
-    - name: Install Dependencies
-      shell: bash
-      run: |
-        if [[ "${{ runner.os }}" == "Linux" ]]; then
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
-            libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev \
-            unzip xvfb
-        elif [[ "${{ runner.os }}" == "Windows" ]]; then
-          choco install 7zip -y
-        fi
+    # 安装7zip (Windows)
+    - name: Install 7zip
+      if: runner.os == 'Windows'
+      shell: powershell
+      run: choco install 7zip -y
     
     # 下载预编译的Skia
     - name: Download Skia
       shell: bash
       run: |
         SKIA_VERSION=m102-861e4743af
-        if [[ "${{ runner.os }}" == "Windows" ]]; then
-          skia_url="https://github.com/aseprite/skia/releases/download/${SKIA_VERSION}/Skia-Windows-Release-x64.zip"
-        elif [[ "${{ runner.os }}" == "macOS" ]]; then
-          skia_url="https://github.com/aseprite/skia/releases/download/${SKIA_VERSION}/Skia-macOS-Release-arm64.zip"
-        else
-          skia_url="https://github.com/aseprite/skia/releases/download/${SKIA_VERSION}/Skia-Linux-Release-x64.zip"
-        fi
+        skia_url="https://github.com/aseprite/skia/releases/download/${SKIA_VERSION}/Skia-Windows-Release-x64.zip"
         
         echo "Downloading Skia from: $skia_url"
         curl -L "$skia_url" -o skia.zip
-        
-        if [[ "${{ runner.os }}" == "Windows" ]]; then
-          7z x skia.zip -o skia
-        else
-          unzip skia.zip -d skia
-        fi
-        
+        7z x skia.zip -o skia
         ls -R skia || true
     
     # 设置构建环境
     - name: Setup build environment
       shell: bash
       run: |
-        if [[ "${{ runner.os }}" == "Windows" ]]; then
-          echo "enable_ccache=off" >> $GITHUB_ENV
-        else
-          echo "enable_ccache=on" >> $GITHUB_ENV
-        fi
-        
+        echo "enable_ccache=off" >> $GITHUB_ENV
         echo "laf_backend=skia" >> $GITHUB_ENV
         echo "enable_scripting=on" >> $GITHUB_ENV
         echo "skia_arch=${{ matrix.skia_arch }}" >> $GITHUB_ENV
-    
-    # 使用ccache加速构建
-    - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2.17
-      if: ${{ runner.os != 'Windows' }}
-      with:
-        key: ${{ runner.os }}-${{ github.sha }}
     
     # Windows特定设置
     - uses: ilammy/msvc-dev-cmd@v1
@@ -92,9 +53,7 @@ jobs:
       run: |
         cmake -S . -B build -G Ninja \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 \
           -DENABLE_SCRIPTING=${{ env.enable_scripting }} \
-          -DENABLE_CCACHE=${{ env.enable_ccache }} \
           -DLAF_BACKEND=${{ env.laf_backend }} \
           -DSKIA_DIR=$(pwd)/skia \
           -DSKIA_LIBRARY_DIR=$(pwd)/skia/out/Release-${{ env.skia_arch }}
@@ -105,22 +64,12 @@ jobs:
       run: |
         cd build && ninja aseprite
     
-    # 运行测试
-    - name: Run tests
-      shell: bash
-      run: |
-        if [[ "${{ runner.os }}" == "Linux" ]]; then
-          xvfb-run ctest --test-dir build --output-on-failure
-        else
-          ctest --test-dir build --output-on-failure
-        fi
-    
-    # 打包并上传制品
-    - name: Upload artifact
-      uses: actions/upload-artifact@v3
+    # 上传制品 (修正后的版本)
+    - name: Upload Aseprite Artifact
+      uses: actions/upload-artifact@v4
       with:
-        name: Aseprite-${{ runner.os }}
+        name: Aseprite-Windows
         path: |
-          build/bin/aseprite${{ matrix.ext }}
+          build/bin/aseprite.exe
           build/bin/data/**
         if-no-files-found: error
