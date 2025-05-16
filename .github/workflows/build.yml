@@ -16,14 +16,82 @@ jobs:
         choco install 7zip -y
         choco install ninja -y
     
-    # 下载Skia
+    # 下载Skia (已改进)
     - name: Download Skia
       shell: bash
       run: |
+        set -e # 确保脚本在任何命令失败时立即退出
+
         SKIA_VERSION=m102-861e4743af
-        curl -L "https://github.com/aseprite/skia/releases/download/${SKIA_VERSION}/Skia-Windows-Release-x64.zip" -o skia.zip
-        7z x skia.zip -o skia -y
-        ls skia/out/Release-x64 || echo "Skia extraction failed"
+        SKIA_URL="https://github.com/aseprite/skia/releases/download/${SKIA_VERSION}/Skia-Windows-Release-x64.zip"
+        SKIA_ZIP_FILE="skia.zip"
+        SKIA_EXTRACT_DIR="skia"
+
+        echo "INFO: Starting Skia download from ${SKIA_URL} to ${SKIA_ZIP_FILE}"
+        
+        # 使用 curl 下载 Skia
+        # --fail: 让 curl 在 HTTP 服务器错误时返回错误码 (例如 404 会返回 22)
+        # --show-error: 在 --silent 模式下仍然显示错误信息
+        # -L: 跟随重定向
+        curl -L --fail --show-error "${SKIA_URL}" -o "${SKIA_ZIP_FILE}"
+        CURL_EXIT_CODE=$?
+        if [ ${CURL_EXIT_CODE} -ne 0 ]; then
+          echo "ERROR: curl failed to download Skia. Exit code: ${CURL_EXIT_CODE}."
+          # 如果 curl 因为网络连接问题返回 7，或者因为服务器错误 (如404) 返回 22，脚本会在这里退出
+          exit ${CURL_EXIT_CODE} 
+        fi
+        echo "INFO: Skia raw file downloaded: ${SKIA_ZIP_FILE}"
+
+        echo "INFO: Verifying downloaded file ${SKIA_ZIP_FILE}..."
+        if [ ! -f "${SKIA_ZIP_FILE}" ]; then
+          echo "ERROR: Download verification failed. ${SKIA_ZIP_FILE} does not exist."
+          exit 1
+        fi
+        if [ ! -s "${SKIA_ZIP_FILE}" ]; then
+          echo "ERROR: Download verification failed. ${SKIA_ZIP_FILE} is empty."
+          rm -f "${SKIA_ZIP_FILE}" # 删除空文件
+          exit 1
+        fi
+        echo "INFO: ${SKIA_ZIP_FILE} verified successfully (exists and is not empty)."
+
+        echo "INFO: Creating extraction directory ${SKIA_EXTRACT_DIR} if it doesn't exist..."
+        mkdir -p "${SKIA_EXTRACT_DIR}" # -p: 如果父目录不存在则创建，且如果目录已存在也不会报错
+
+        echo "INFO: Extracting ${SKIA_ZIP_FILE} to ${SKIA_EXTRACT_DIR}..."
+        # 确保 7z 在 PATH 中 (choco install 应该会处理)
+        # 如果 7z 命令失败并返回 7，则表示 7z 遇到了 "命令行错误"
+        7z x "${SKIA_ZIP_FILE}" -o"${SKIA_EXTRACT_DIR}" -y
+        SEVENZIP_EXIT_CODE=$?
+        if [ ${SEVENZIP_EXIT_CODE} -ne 0 ]; then
+          echo "ERROR: 7z extraction failed. Exit code: ${SEVENZIP_EXIT_CODE}."
+          echo "Listing contents of current directory:"
+          ls -l
+          if [ -d "${SKIA_EXTRACT_DIR}" ]; then
+            echo "Listing contents of ${SKIA_EXTRACT_DIR}:"
+            ls -R "${SKIA_EXTRACT_DIR}"
+          fi
+          exit ${SEVENZIP_EXIT_CODE}
+        fi
+        echo "INFO: Skia extracted successfully to ${SKIA_EXTRACT_DIR}."
+
+        echo "INFO: Verifying Skia extraction contents..."
+        EXPECTED_SKIA_CONTENT_PATH="${SKIA_EXTRACT_DIR}/out/Release-x64"
+        if [ -d "${EXPECTED_SKIA_CONTENT_PATH}" ] && [ "$(ls -A "${EXPECTED_SKIA_CONTENT_PATH}")" ]; then
+          echo "INFO: Skia extraction verified. Found content in ${EXPECTED_SKIA_CONTENT_PATH}."
+          echo "Contents of ${EXPECTED_SKIA_CONTENT_PATH}:"
+          ls -A "${EXPECTED_SKIA_CONTENT_PATH}"
+        else
+          echo "ERROR: Skia extraction verification failed."
+          echo "Expected path ${EXPECTED_SKIA_CONTENT_PATH} not found or is empty."
+          echo "Listing contents of ${SKIA_EXTRACT_DIR} (recursive):"
+          if [ -d "${SKIA_EXTRACT_DIR}" ]; then
+            ls -R "${SKIA_EXTRACT_DIR}"
+          else
+            echo "ERROR: ${SKIA_EXTRACT_DIR} does not exist."
+          fi
+          exit 1
+        fi
+        echo "INFO: Download Skia step completed successfully."
     
     # 设置MSVC环境
     - name: Setup MSVC
