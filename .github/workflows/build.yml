@@ -1,75 +1,64 @@
-name: Build Aseprite
+name: Build Aseprite (Windows)
 on: [push, pull_request]
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest]
-        include:
-          - os: windows-latest
-            skia_arch: x64
-            ext: .exe
+    runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
     
-    # 安装7zip (Windows)
-    - name: Install 7zip
-      if: runner.os == 'Windows'
+    # 安装必要工具
+    - name: Install prerequisites
       shell: powershell
-      run: choco install 7zip -y
+      run: |
+        choco install 7zip -y
+        choco install ninja -y
     
-    # 下载预编译的Skia
+    # 下载Skia
     - name: Download Skia
       shell: bash
       run: |
         SKIA_VERSION=m102-861e4743af
-        skia_url="https://github.com/aseprite/skia/releases/download/${SKIA_VERSION}/Skia-Windows-Release-x64.zip"
-        
-        echo "Downloading Skia from: $skia_url"
-        curl -L "$skia_url" -o skia.zip
-        7z x skia.zip -o skia
-        ls -R skia || true
+        curl -L "https://github.com/aseprite/skia/releases/download/${SKIA_VERSION}/Skia-Windows-Release-x64.zip" -o skia.zip
+        7z x skia.zip -o skia -y
+        ls skia/out/Release-x64 || echo "Skia extraction failed"
     
-    # 设置构建环境
-    - name: Setup build environment
+    # 设置MSVC环境
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+    
+    # 配置构建
+    - name: Configure CMake
+      shell: cmd
+      run: |
+        cmake -S . -B build -G Ninja ^
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
+          -DLAF_BACKEND=skia ^
+          -DENABLE_SCRIPTING=ON ^
+          -DSKIA_DIR="%cd%\skia" ^
+          -DSKIA_LIBRARY_DIR="%cd%\skia\out\Release-x64"
+    
+    # 编译
+    - name: Build
+      shell: cmd
+      run: |
+        cd build
+        ninja
+    
+    # 打包结果
+    - name: Package Artifacts
       shell: bash
       run: |
-        echo "enable_ccache=off" >> $GITHUB_ENV
-        echo "laf_backend=skia" >> $GITHUB_ENV
-        echo "enable_scripting=on" >> $GITHUB_ENV
-        echo "skia_arch=${{ matrix.skia_arch }}" >> $GITHUB_ENV
+        mkdir -p package
+        cp build/bin/aseprite.exe package/
+        cp -r build/bin/data package/
+        7z a aseprite.zip ./package/*
     
-    # Windows特定设置
-    - uses: ilammy/msvc-dev-cmd@v1
-      if: runner.os == 'Windows'
-    
-    # 生成构建系统
-    - name: Generate build files
-      shell: bash
-      run: |
-        cmake -S . -B build -G Ninja \
-          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-          -DENABLE_SCRIPTING=${{ env.enable_scripting }} \
-          -DLAF_BACKEND=${{ env.laf_backend }} \
-          -DSKIA_DIR=$(pwd)/skia \
-          -DSKIA_LIBRARY_DIR=$(pwd)/skia/out/Release-${{ env.skia_arch }}
-    
-    # 编译Aseprite
-    - name: Build Aseprite
-      shell: bash
-      run: |
-        cd build && ninja aseprite
-    
-    # 上传制品 (修正后的版本)
-    - name: Upload Aseprite Artifact
+    # 上传制品
+    - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: Aseprite-Windows
-        path: |
-          build/bin/aseprite.exe
-          build/bin/data/**
-        if-no-files-found: error
+        path: aseprite.zip
